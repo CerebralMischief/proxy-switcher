@@ -1,4 +1,4 @@
-/* globals background */
+/* globals background, manifest */
 'use strict';
 
 function $ (id) {
@@ -42,12 +42,79 @@ function $ (id) {
 })($('for-all'), $('socks'));
 
 // listener
+var resolve = (function () {
+  let cache = {};
+  let http = document.getElementById('http-host');
+  let ssl = document.getElementById('ssl-host');
+  let ftp = document.getElementById('ftp-host');
+  let socks = document.getElementById('socks-host');
+
+  function validate (ip) {
+   if (/^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(ip)) {
+      return (true);
+    }
+    return (false);
+  }
+
+  function image (input) {
+    let value = input.value.trim();
+    if (!value || value.startsWith('127.') || value.startsWith('192.') || value === 'localhost') {
+      input.style['background-image'] = `url(${manifest.base}flags/local.png`;
+    }
+    else if (cache[value]) {
+      input.style['background-image'] = `url(${manifest.base}flags/${cache[value].toLowerCase()}.png`;
+    }
+    else {
+      input.style['background-image'] = `url(${manifest.base}flags/error.png`;
+    }
+  }
+  function update () {
+    image(http);
+    image(ssl);
+    image(socks);
+    image(ftp);
+  }
+
+  function find (ip) {
+    let req = new XMLHttpRequest ();
+    req.open('GET', 'http://ip-api.com/json/' + ip);
+    req.responseType = 'json';
+    req.onload = function () {
+      if (req.response && req.response.countryCode) {
+        cache[ip] = req.response.countryCode;
+      }
+      else {
+        cache[ip] = 'error';
+      }
+      update();
+    };
+    req.onerror = update;
+    req.send();
+  }
+
+  return function () {
+    let ips = [http.value, ssl.value, ftp.value, socks.value]
+    .map(i => i.trim())
+    .filter(i => {
+      return i && !i.startsWith('127.') && !i.startsWith('192.') && i !== 'localhost';
+    })
+    .filter(i => !cache[i])
+    .filter(validate);
+    if (ips.length) {
+      ips.forEach(find);
+    }
+    else {
+      update();
+    }
+  };
+})();
+
 document.addEventListener('change', function (e) {
   var target = e.target;
   if (target.dataset.pref) {
     var value = target.value;
     if (target.type === 'number') {
-      value = parseInt(value);
+      value = parseInt(value) || 0;
     }
     if (target.type === 'checkbox') {
       value = target.checked;
@@ -56,6 +123,9 @@ document.addEventListener('change', function (e) {
       pref: target.dataset.pref,
       value: value
     });
+    if (target.id.endsWith('-host')) {
+      resolve();
+    }
   }
 });
 background.receive('pref', function (obj) {
@@ -65,6 +135,9 @@ background.receive('pref', function (obj) {
     case 'text':
     case 'number':
       elem.value = obj.value;
+      if (elem.type === 'text' && elem.id.endsWith('-host')) {
+        resolve();
+      }
       break;
     case 'checkbox':
       elem.checked = obj.value;
@@ -94,17 +167,25 @@ background.receive('pref', function (obj) {
 });
 
 /* automatic */
-(function (input, button) {
-  background.receive('automatic', function (val) {
-    input.value = val;
-  });
+(function (input, button, form) {
   input.addEventListener('change', function () {
-    background.send('automatic', input.value);
+    background.send('update-pac-value', input.value);
   });
   button.addEventListener('click', function () {
     background.send('reload-pac');
   });
-})(document.getElementById('automatic-text'), document.getElementById('automatic-button'));
+  form.addEventListener('click', function (e) {
+    if (e.target.value) {
+      background.send('update-pac-index', parseInt(e.target.value));
+    }
+  });
+  background.receive('update-pac-index', function (index) {
+    form.querySelector(`input[value="${index}"]`).checked = true;
+  });
+  background.receive('update-pac-value', function (value) {
+    input.value = value;
+  });
+})($('automatic-text'), $('automatic-button'), $('automatic-form'));
 
 /* profiles */
 background.receive('profiles', (function () {
@@ -129,7 +210,6 @@ background.receive('profiles', (function () {
   };
 })());
 background.receive('profile-index', function (i) {
-  console.error(i, document.querySelector('select').selectedIndex);
   document.querySelector('select').selectedIndex = i;
 });
 document.querySelector('select').addEventListener('change', function (e) {
@@ -153,7 +233,8 @@ background.receive('init', function () {
   background.send('pref', 'network.proxy.socks_version');
   background.send('profiles');
   background.send('attached', null);
-  background.send('automatic', null);
+  background.send('update-pac-value', null);
+  background.send('update-pac-index', null);
   [].forEach.call(document.querySelectorAll('[data-pref]'), function (elem) {
     var pref = elem.dataset.pref;
     background.send('pref', pref);

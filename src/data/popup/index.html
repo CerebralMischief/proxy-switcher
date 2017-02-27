@@ -28,7 +28,11 @@
             <option value="5" name="profile">Profile 6</option>
           </select>
         </td>
-        <td align="right"><a href="#" data-cmd="edit-profiles">Edit</a></td>
+        <td align="right">
+          <a href="#" data-cmd="edit-profiles">Edit</a> -
+          <a href="#" data-cmd="import-profiles">Import</a> -
+          <a href="#" data-cmd="export-profiles">Export</a>
+        </td>
       </tr>
       <tr>
         <td>HTTP Proxy:</td>
@@ -74,20 +78,33 @@
       </tr>
     </table>
     </div>
+    <div id="no-settings-tab">
+      No extra settings
+    </div>
     <div id="automatic-tab">
-      Automatic proxy configuration URL:
+      <p>Automatic proxy configuration URL:</p>
+      <form id="automatic-form">
+        PAC profile:
+        <label><input type="radio" name="pac" value="0">1</label>
+        <label><input type="radio" name="pac" value="1">2</label>
+        <label><input type="radio" name="pac" value="2">3</label>
+        <label><input type="radio" name="pac" value="3">4</label>
+        <label><input type="radio" name="pac" value="4">5</label>
+      </form>
       <div>
-        <input id="automatic-text" type="text" placeholder="">
+        <input id="automatic-text" type="text" placeholder="PAC file location in file:// or http:// format for this profile">
         <input id="automatic-button" type="button" value="Reload">
       </div>
-      <a href="#" data-cmd="open-console">Open Error Console</a>
+      <p>
+        Open <a href="#" data-cmd="open-console">Error Console</a> to track PAC syntax errors. <a href="#" data-cmd="open-pac">Read more</a> on how to write a PAC script
+      </p>
     </div>
     <div id="links">
       <b>Links:</b>
       <a href="#" data-cmd="open-ip">Check external IP</a>&nbsp;|&nbsp;
-      <a href="#" data-cmd="open-geo">Check GEO location</a>&nbsp;|&nbsp;
       <a href="#" data-cmd="open-leak">Check DNS leakage</a>&nbsp;|&nbsp;
-      <a href="#" data-cmd="open-faq">Open FAQ page</a>
+      <a href="#" data-cmd="open-faq">Open FAQs page</a>&nbsp;|&nbsp;
+      <a href="#" data-cmd="error-log">Error Log</a>
     </div>
   </body>
 </html>

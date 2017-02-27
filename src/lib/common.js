@@ -1,5 +1,6 @@
 'use strict';
 
+var tbExtra = require('./tbExtra');
 var app = require('./firefox/firefox');
 var config = require('./config');
 
@@ -41,15 +42,29 @@ app.popup.receive('attached', function (bol) {
   }
 });
 
-app.popup.receive('automatic', function (val) {
-  if (val === null) {
-    app.popup.send('automatic', app.proxy.get('network.proxy.autoconfig_url'));
+app.popup.receive('reload-pac', app.proxy.reload);
+
+app.popup.receive('update-pac-index', function (index) {
+  if (index !== null) {
+    config.proxy.pac.index = index;
+    let value = config.proxy.pac.value(index, null);
+    app.proxy.set('network.proxy.autoconfig_url', value);
+    app.popup.send('update-pac-value', value);
   }
   else {
-    app.proxy.set('network.proxy.autoconfig_url', val);
+    app.popup.send('update-pac-index', config.proxy.pac.index);
   }
 });
-app.popup.receive('reload-pac', app.proxy.reload);
+app.popup.receive('update-pac-value', function (value) {
+  let index = config.proxy.pac.index;
+  if (value !== null) {
+    config.proxy.pac.value(index, value);
+    app.proxy.set('network.proxy.autoconfig_url', value);
+  }
+  else {
+    app.popup.send('update-pac-value', config.proxy.pac.value(index, null));
+  }
+});
 
 /* prefs */
 app.popup.receive('pref-changed', function (obj) {
@@ -80,6 +95,11 @@ app.popup.receive('pref', function (pref) {
     value: app.proxy.get(pref)
   });
 });
+function reset () {
+  app.proxy.fromJSON(app.storage.read('profile-' + config.proxy.pIndex));
+  app.popup.init();
+}
+app.sp.on('profile-index', reset);
 
 /* profiles */
 app.popup.receive('profiles', function () {
@@ -94,8 +114,6 @@ app.popup.receive('profile-index', function (i) {
   }
   else {
     config.proxy.pIndex = i;
-    app.proxy.fromJSON(app.storage.read('profile-' + config.proxy.pIndex));
-    app.popup.init();
   }
 });
 
@@ -122,12 +140,52 @@ app.popup.receive('command', function (cmd) {
     app.popup.hide();
     app.developer.HUDService.openBrowserConsoleOrFocus();
     break;
+  case 'open-pac':
+    app.popup.hide();
+    app.tab.open(config.links.pac);
+    break;
+  case 'error-log':
+    app.popup.hide();
+    app.emit('open-log');
+    break;
   case 'edit-profiles':
     app.popup.hide();
-    var tmp = app.prompt('Edit profile names', 'Comma separated list of profiles:', config.proxy.profiles);
-    if (tmp.result) {
+    let old = config.proxy.profiles;
+    let tmp = app.prompt('Edit profile names', 'Comma separated list of profiles:', old);
+    if (tmp.result && tmp.input !== old) {
       config.proxy.profiles = tmp.input;
     }
+    break;
+  case 'import-profiles':
+    app.fromFile(function (profiles, json) {
+      profiles.forEach((p, i) => config.proxy.setProfile(i, p,json[p]));
+      config.proxy.profiles = profiles.join(', ');
+      reset();
+      config.proxy.pIndex = 0;
+    });
+    break;
+  case 'export-profiles':
+    let obj = {};
+    let profiles = config.proxy.profiles;
+    profiles.split(', ').forEach(function (name, index) {
+      obj[name] = config.proxy.getProfile(index);
+    });
+    app.download('data:text;base64,' + app.base64.encode(JSON.stringify(obj)));
+    app.notification('profiles are exported to your "Desktop" directory');
+    break;
+  }
+});
+
+/* middle clicking */
+tbExtra.onClick(function (e) {
+  if (e.button === 1) {
+    if (e.metaKey || e.ctrlKey) {
+      app.proxy.type = (app.proxy.type - 1 + 5) % 5;
+    }
+    else {
+      app.proxy.type = (app.proxy.type + 1) % 5;
+    }
+    setProxy(app.proxy.type);
   }
 });
 

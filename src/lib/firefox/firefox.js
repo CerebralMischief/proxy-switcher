@@ -10,12 +10,21 @@ var self          = require('sdk/self'),
     timers        = require('sdk/timers'),
     unload        = require('sdk/system/unload'),
     prefsvc       = require('sdk/preferences/service'),
+    base64        = require('sdk/base64'),
     {on, off, once, emit} = require('sdk/event/core'),
     {ToggleButton} = require('sdk/ui/button/toggle'),
-    {Cc, Ci, Cu}  = require('chrome'),
+    {Cc, Ci}      = require('chrome'),
     config        = require('../config');
 
-var {XPCOMUtils} = Cu.import('resource://gre/modules/XPCOMUtils.jsm');
+var resources = {};
+var {XPCOMUtils} = require('resource://gre/modules/XPCOMUtils.jsm');
+
+XPCOMUtils.defineLazyModuleGetter(resources, 'FileUtils', 'resource://gre/modules/FileUtils.jsm');
+XPCOMUtils.defineLazyModuleGetter(resources, 'TextDecoder', 'resource://gre/modules/osfile.jsm');
+XPCOMUtils.defineLazyModuleGetter(resources, 'OS', 'resource://gre/modules/osfile.jsm');
+XPCOMUtils.defineLazyModuleGetter(resources, 'Downloads', 'resource://gre/modules/Downloads.jsm');
+XPCOMUtils.defineLazyModuleGetter(resources, 'Services', 'resource://gre/modules/Services.jsm');
+XPCOMUtils.defineLazyModuleGetter(resources, 'devtools', 'resource://gre/modules/devtools/Loader.jsm');
 
 // Event Emitter
 exports.on = on.bind(null, exports);
@@ -25,15 +34,19 @@ exports.removeListener = function removeListener (type, listener) {
   off(exports, type, listener);
 };
 
+exports.sp = sp;
+exports.base64 = base64;
+
 //toolbar button
 exports.button = (function () {
   var button = new ToggleButton({
     id: self.name,
-    label: 'Proxy Switcher',
+    label: 'Proxy Switcher\n\nLeft Click: Open panel\nMiddle Click: Select next proxy type\nMiddle + Ctrl Click: Select previous proxy type',
     icon: {
       '18': './icons/toolbar/gray/18.png',
       '36': './icons/toolbar/gray/36.png'
     },
+    badgeColor: '#666666',
     onChange: function (state) {
       if (state.checked) {
         exports.popup._obj.show({
@@ -46,7 +59,7 @@ exports.button = (function () {
   });
   return {
     _obj: button,
-    set icon (val) {
+    set icon (val) {  // jshint ignore:line
       button.icon = {
         18: './icons/toolbar/' + val + '/18.png',
         36: './icons/toolbar/' + val + '/36.png'
@@ -77,12 +90,17 @@ exports.popup = (function () {
   var popup = require('sdk/panel').Panel({
     contentURL: data.url('./popup/index.html'),
     contentScriptFile: [data.url('./popup/firefox/firefox.js'), data.url('./popup/index.js')],
+    contentScriptOptions: {
+      base: data.url('')
+    },
     onHide: function () {
       exports.button._obj.state('window', {checked: false});
       //popup.contentURL = 'about:blank';
-    }
+    },
+    // contextMenu: true
   });
   popup.on('show', () => popup.port.emit('init'));
+
   return {
     _obj: popup,
     send: function (id, data) {
@@ -113,8 +131,8 @@ exports.tab = {
     }
   },
   list: function () {
-    var temp = [];
-    for each (var tab in tabs) {
+    let temp = [];
+    for (let tab of tabs) {
       temp.push(tab);
     }
     return Promise.resolve(temp);
@@ -127,22 +145,21 @@ exports.version = function () {
 
 exports.timer = timers;
 
-exports.notification = function (title, text) {
+exports.notification = function (text) {
   notifications.notify({
-    title: title,
-    text: text,
-    iconURL: data.url('icons/32.png')
+    title: 'Proxy Switcher',
+    text,
+    iconURL: data.url('icons/64.png')
   });
 };
 
 exports.developer = {};
 XPCOMUtils.defineLazyGetter(exports.developer, 'HUDService', function () {
-  let  {devtools} = Cu.import('resource://gre/modules/devtools/Loader.jsm');
   try {
-    return devtools.require('devtools/webconsole/hudservice');
+    return resources.devtools.require('devtools/webconsole/hudservice');
   }
   catch (e) {
-    return devtools.require('devtools/client/webconsole/hudservice');
+    return resources.devtools.require('devtools/client/webconsole/hudservice');
   }
 });
 
@@ -259,7 +276,7 @@ exports.proxy = (function () {
       else {
         prefsvc.reset('network.proxy.socks_remote_dns');
       }
-      exports.storage.write('attached', 'attached' in tmp ? tmp.attached : true);
+      //exports.storage.write('attached', 'attached' in tmp ? tmp.attached : true);
       prefsvc.set('network.proxy.no_proxies_on', 'noProxy' in tmp ? tmp.noProxy : 'localhost, 127.0.0.1');
     }
   };
@@ -280,3 +297,50 @@ exports.startup = function (callback) {
     callback();
   }
 };
+
+exports.download = function (source) {
+  Promise.all([resources.Downloads.getList(resources.Downloads.ALL), resources.Downloads.createDownload({
+    source,
+    target: resources.OS.Path.join(resources.OS.Constants.Path.desktopDir, 'proxy-switcher-profiles.json')
+  })]).then(function ([list, download]) {
+    list.add(download);
+    download.start();
+  });
+};
+
+exports.fromFile = function (callback) {
+  let browserWindow = Cc['@mozilla.org/appshell/window-mediator;1'].
+                          getService(Ci.nsIWindowMediator).
+                          getMostRecentWindow('navigator:browser');
+  let filePicker = Cc['@mozilla.org/filepicker;1'].createInstance(Ci.nsIFilePicker);
+  filePicker.init(browserWindow, 'proxy-switcher-profiles.json', Ci.nsIFilePicker.modeOpen);
+  var rv = filePicker.show();
+  if (rv === Ci.nsIFilePicker.returnOK) {
+    let decoder = new resources.TextDecoder();
+    let promise = resources.OS.File.read(filePicker.file.path);
+    promise = promise.then(
+      function onSuccess (array) {
+        try {
+          let json = JSON.parse(decoder.decode(array));
+          let profiles = Object.keys(json);
+          let doit = resources.Services.prompt.confirm(
+            null,
+            'Proxy Switcher',
+            'Your list will be overwritten with: ' + profiles
+          );
+          if (doit) {
+            callback(profiles, json);
+          }
+        }
+        catch (e) {
+          exports.notification(e.message);
+        }
+      }
+    );
+  }
+};
+
+// initializing monitor.js;
+if (prefs.monitor) {
+  require('../monitor.js');
+}
